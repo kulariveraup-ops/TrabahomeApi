@@ -27,11 +27,6 @@ import {
   recordLoginFailure,
 } from "../../services/loginRateLimit.service.js";
 import {
-  LOGIN_OTP_LENGTH,
-  LOGIN_OTP_MAX_ATTEMPTS,
-  LOGIN_OTP_TTL_SECONDS,
-} from "../../services/loginOtpPolicy.js";
-import {
   convertBase64ToPublicAsset,
   STORAGE_FOLDERS,
 } from "../../services/cloudStorage.service.js";
@@ -535,37 +530,17 @@ export const loginHomeOwner = async (req, res) => {
 
     clearLoginFailures(rateLimitKey);
 
-    let loginOtp;
-    try {
-      loginOtp = await createAndSendOtp({
-        userType: "homeowner",
-        userId: user._id,
-        email: user.email,
-        purpose: "login",
-        length: LOGIN_OTP_LENGTH,
-        ttlSeconds: LOGIN_OTP_TTL_SECONDS,
-        maxAttempts: LOGIN_OTP_MAX_ATTEMPTS,
-        replaceExisting: true,
-      });
-    } catch (otpError) {
-      console.error("Homeowner OTP creation error:", otpError);
-      return res.status(500).json({
-        success: false,
-        message: "Unable to send verification code. Please try again.",
-      });
-    }
-
     const profile = toHomeownerProfile(user);
-    console.info("[HOMEOWNER_LOGIN_OTP] signin issued", {
-      otpId: loginOtp.otpId,
-      role: "homeowner",
-      purpose: "login",
-      expiresAt: loginOtp.expiresAt,
-      used: false,
-    });
+    const token = jwt.sign(
+      { id: String(user._id), email: user.email, role: "homeowner" },
+      process.env.JWT_SECRET || "change-this-secret",
+      { expiresIn: "1d" }
+    );
+
     return res.status(200).json({
-      otpRequired: true,
-      otpId: loginOtp.otpId,
+      success: true,
+      message: "Logged in successfully.",
+      token,
       email: profile.email,
       homeowner: profile,
       mustChangePassword: Boolean(user.mustChangePassword),
@@ -1407,5 +1382,4 @@ export const markGuideSeen = async (req, res) => {
     return res.status(500).json({ success: false, message: "Internal server error." });
   }
 };
-
 

@@ -31,7 +31,7 @@ const createResponse = () => {
   return res;
 };
 
-test("Admin login credentials and OTP flow", async (t) => {
+test("Admin login credentials and reusable OTP verifier", async (t) => {
   await connectDB();
 
   const testEmail = process.env.ADMIN_EMAIL || "trabahome.up.phinmaed@gmail.com";
@@ -43,9 +43,7 @@ test("Admin login credentials and OTP flow", async (t) => {
     assert.equal(admin.role, "admin");
   });
 
-  let issuedOtpId;
-
-  await t.test("2. Admin login with correct password requires OTP", async () => {
+  await t.test("2. Admin login with correct password issues a JWT without OTP", async () => {
     const req = {
       body: {
         email: testEmail,
@@ -58,26 +56,37 @@ test("Admin login credentials and OTP flow", async (t) => {
 
     assert.equal(res.statusCode, 200);
     assert.equal(res.body.success, true);
-    assert.equal(res.body.otpRequired, true);
-    assert.ok(res.body.otpId, "otpId was returned");
-    assert.equal(res.body.token, undefined, "JWT token is NOT issued before OTP verification");
-    issuedOtpId = res.body.otpId;
-
-    const otpDoc = await Otp.findById(issuedOtpId);
-    assert.ok(otpDoc, "OTP record exists in database");
-    assert.equal(otpDoc.userType, "admin");
-    assert.equal(otpDoc.purpose, "login");
-    assert.equal(otpDoc.usedAt, null);
+    assert.ok(res.body.token, "JWT token is issued after credential validation");
+    assert.equal(res.body.otpRequired, undefined);
+    assert.equal(res.body.otpId, undefined);
   });
 
+  let otpRecord;
+
   await t.test("3. Admin verify OTP with wrong code fails", async () => {
+    const admin = await Admin.findOne({ email: testEmail });
+    const { hashOtp } = await import("../services/otp.service.js");
+    otpRecord = await Otp.create({
+      userType: "admin",
+      userId: admin._id,
+      email: testEmail,
+      purpose: "login",
+      channel: "email",
+      codeHash: hashOtp("123456"),
+      expiresAt: new Date(Date.now() + 5 * 60 * 1000),
+      attempts: 0,
+      maxAttempts: 3,
+      sentCount: 1,
+      lastSentAt: new Date(),
+    });
+
     const req = {
       baseUrl: "/api/admins",
       route: { path: "/verify-login-otp" },
       body: {
         email: testEmail,
         code: "000000",
-        otpId: issuedOtpId,
+        otpId: String(otpRecord._id),
       },
     };
     const res = createResponse();
@@ -89,25 +98,8 @@ test("Admin login credentials and OTP flow", async (t) => {
     assert.equal(res.body.message, "Invalid or expired code.");
   });
 
-  await t.test("4. Admin verify OTP with correct code succeeds and issues token", async () => {
-    // Generate a known test OTP for the admin user
-    const admin = await Admin.findOne({ email: testEmail });
-    const { hashOtp } = await import("../services/otp.service.js");
+  await t.test("4. Admin verify OTP with correct code remains available", async () => {
     const testCode = "123456";
-    const otpRecord = await Otp.create({
-      userType: "admin",
-      userId: admin._id,
-      email: testEmail,
-      purpose: "login",
-      channel: "email",
-      codeHash: hashOtp(testCode),
-      expiresAt: new Date(Date.now() + 5 * 60 * 1000),
-      attempts: 0,
-      maxAttempts: 3,
-      sentCount: 1,
-      lastSentAt: new Date(),
-    });
-
     const req = {
       baseUrl: "/api/admins",
       route: { path: "/verify-login-otp" },
@@ -130,7 +122,6 @@ test("Admin login credentials and OTP flow", async (t) => {
     const updatedOtp = await Otp.findById(otpRecord._id);
     assert.ok(updatedOtp.usedAt !== null, "OTP is marked as used");
 
-    // Clean up test otp
     await Otp.deleteOne({ _id: otpRecord._id });
   });
 

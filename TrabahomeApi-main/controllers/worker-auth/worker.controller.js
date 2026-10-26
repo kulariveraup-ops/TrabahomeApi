@@ -5,7 +5,6 @@ import Booking from '../../models/booking.Model.js';
 import ServiceRequest from '../../models/serviceRequest.Model.js';
 import Worker from '../../models/worker.Model.js';
 import HomeOwner from '../../models/homeOwner.Model.js';
-import { createAndSendOtp } from '../../services/otp.service.js';
 import { sendEmail } from '../../services/email.service.js';
 import {
   buildLoginRateLimitKey,
@@ -32,11 +31,6 @@ import {
   calculateWorkerRatingStats,
   getWorkerRatingStatsForId,
 } from '../../services/workerRating.service.js';
-import {
-  LOGIN_OTP_LENGTH,
-  LOGIN_OTP_MAX_ATTEMPTS,
-  LOGIN_OTP_TTL_SECONDS,
-} from '../../services/loginOtpPolicy.js';
 import { verifyWorkerGovernmentId } from '../../services/aiIdVerification.service.js';
 import {
   uploadPublicAsset,
@@ -1555,30 +1549,17 @@ export const signInWorker = async (req, res) => {
 
     clearLoginFailures(rateLimitKey);
 
-    let loginOtp;
-    try {
-      loginOtp = await createAndSendOtp({
-        userType: 'worker',
-        userId: worker._id,
-        email: worker.email,
-        purpose: 'login',
-        length: LOGIN_OTP_LENGTH,
-        ttlSeconds: LOGIN_OTP_TTL_SECONDS,
-        maxAttempts: LOGIN_OTP_MAX_ATTEMPTS,
-        replaceExisting: true,
-      });
-    } catch (otpError) {
-      console.error('Worker OTP creation error:', otpError);
-      return res.status(500).json({
-        success: false,
-        message: 'Unable to send verification code. Please try again.',
-      });
-    }
-
     const profile = toWorkerProfile(worker);
+    const token = jwt.sign(
+      { id: String(worker._id), email: worker.email, role: 'worker' },
+      process.env.JWT_SECRET || 'change-this-secret',
+      { expiresIn: '1d' }
+    );
+
     return res.status(200).json({
-      otpRequired: true,
-      otpId: loginOtp.otpId,
+      success: true,
+      message: 'Logged in successfully.',
+      token,
       email: profile.email,
       worker: profile,
       mustChangePassword: Boolean(worker.mustChangePassword),
@@ -1736,4 +1717,3 @@ export const requestProfileUpdate = async (req, res) => {
     return res.status(500).json({ success: false, message: 'Failed to submit profile update request.' });
   }
 };
-

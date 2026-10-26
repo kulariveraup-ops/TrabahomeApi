@@ -21,12 +21,6 @@ import {
   isLoginRateLimited,
   recordLoginFailure,
 } from "../../services/loginRateLimit.service.js";
-import { createAndSendOtp } from "../../services/otp.service.js";
-import {
-  LOGIN_OTP_LENGTH,
-  LOGIN_OTP_TTL_SECONDS,
-  LOGIN_OTP_MAX_ATTEMPTS,
-} from "../../services/loginOtpPolicy.js";
 
 const normalizeEmail = (email) =>
   String(email || "").trim().toLowerCase();
@@ -156,36 +150,20 @@ export const loginAdmin = async (req, res) => {
 
     clearLoginFailures(rateLimitKey);
 
-    let loginOtp;
-    try {
-      loginOtp = await createAndSendOtp({
-        userType: "admin",
-        userId: admin._id,
-        email: admin.email,
-        purpose: "login",
-        length: LOGIN_OTP_LENGTH,
-        ttlSeconds: LOGIN_OTP_TTL_SECONDS,
-        maxAttempts: LOGIN_OTP_MAX_ATTEMPTS,
-        replaceExisting: true,
-      });
-    } catch (otpError) {
-      console.error("Admin OTP creation error:", otpError);
-      return res.status(500).json({
-        success: false,
-        message: "Unable to send verification code. Please try again.",
-      });
-    }
-
     const { password: _, ...adminData } = admin.toObject();
+    const token = jwt.sign(
+      { id: String(admin._id), email: admin.email, role: "admin" },
+      getJwtSecret(),
+      { expiresIn: "1d" }
+    );
 
     return res.status(200).json({
       success: true,
-      otpRequired: true,
-      otpId: loginOtp.otpId,
+      token,
       email: admin.email,
       admin: adminData,
       data: adminData,
-      message: "Verification code sent to your email.",
+      message: "Logged in successfully.",
     });
   } catch (error) {
     console.error("Admin login error:", error);
